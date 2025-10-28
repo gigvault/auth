@@ -1,22 +1,37 @@
+# Stage 1: Build
 FROM golang:1.23-bullseye AS builder
+
 WORKDIR /src
 
-# Copy shared library first
-COPY shared/ ./shared/
+# Copy go mod files
+COPY go.mod go.sum ./
 
-# Copy service files
-COPY auth/go.mod auth/go.sum ./auth/
-WORKDIR /src/auth
+# Download dependencies (including shared v1.0.0 from GitHub)
 RUN go mod download
 
-WORKDIR /src
-COPY auth/ ./auth/
-WORKDIR /src/auth
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/auth ./cmd/auth
+# Copy source code
+COPY . .
 
+# Build the service
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o /app/auth ./cmd/auth
+
+# Stage 2: Runtime
 FROM alpine:3.18
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /out/auth /usr/local/bin/auth
-COPY auth/config/ /config/
+
+# Install CA certificates for HTTPS
+RUN apk --no-cache add ca-certificates
+
+# Copy binary from builder
+COPY --from=builder /app/auth /usr/local/bin/auth
+
+# Copy config if exists
+COPY config/ /config/ 2>/dev/null || true
+
+# Expose ports
 EXPOSE 8080 9090
+
+# Run as non-root user
+RUN adduser -D -u 1000 gigvault
+USER gigvault
+
 ENTRYPOINT ["/usr/local/bin/auth"]
